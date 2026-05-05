@@ -1,0 +1,9 @@
+from typing import Protocol
+
+from transcribe_meeting_audio.domain.audio import AudioTrack, InputDevice
+
+
+class MicSession(Protocol):
+    def start(self, device: InputDevice, at: float) -> None: ...
+    def switch_to(self, device: InputDevice, at: float) -> None: ...
+    def stop(self, at: float) -> AudioTrack: ...
