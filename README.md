@@ -2,61 +2,76 @@
 
 Records meetings on macOS and ingests transcripts. Detects when any app opens the microphone, captures mic + system loopback as two tracks, survives device changes mid-meeting, transcribes with Parakeet, diarizes with pyannote, and (optionally) polishes the transcript with a local MLX LLM.
 
-## Architecture
+## Prerequisites
 
-Hexagonal. Three use cases under `application/`:
+- macOS 14.4+ on Apple Silicon. Loopback uses CoreAudio Process Tap (14.4+); transcription and the polish step run on MLX.
+- Permissions for your terminal: **Microphone** and **System Audio Recording** (System Settings → Privacy & Security). Without these, mic detection and loopback capture fail silently or with a permission error.
+- For diarization, a Hugging Face account:
+  - `export HF_TOKEN=...` (or run `huggingface-cli login` once)
+  - Accept the gated-model terms while signed in to HF:
+    - https://huggingface.co/pyannote/speaker-diarization-3.1
+    - https://huggingface.co/pyannote/segmentation-3.0
+    - https://huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM
+  - Without these, the CLI keeps running but writes transcripts without speaker labels.
+- Parakeet (ASR) and the polish model download on first run with no token.
 
-- `RecordMeeting` — drives the capture loop from an event stream
-- `TranscribeMeeting` — turns finished tracks + diarization into a `MeetingTranscript`
-- `LabelMeeting` — enrolls speakers from a finished meeting into the speaker bank
-
-Ports (`ports/`) and their current adapters (`adapters/`):
-
-- `EventSource` — `CoreAudioMicDetector` (auto), `KeyboardEventSource` (`--manual`)
-- `CallContext` — `BundleIdCallContext`, `UnknownCallContext`
-- `DeviceRegistry` — `StaticDeviceRegistry`
-- `SessionFactory` / `MicSession` / `LoopbackSession` — `WavSessionFactory` writes both tracks as WAV
-- `Transcriber` — `ParakeetTranscriber` (parakeet-mlx)
-- `Diarizer` / `SpeakerEmbedder` / `SpeakerBankRepository` — `PyannoteDiarizer` + `IdentifyingDiarizer` against a `JsonFileSpeakerBank`
-- `TranscriptPolisher` — `MlxLmTranscriptPolisher` (optional, behind `--polish`)
-
-BDD specs in `tests/features/` exercise the use cases against fakes in `tests/fakes/`.
-
-## Run
-
-Install with the optional extras you need (record / transcribe / diarize / polish, or `all`):
+## Install
 
 ```sh
 uv sync --extra all
 ```
 
-Watch for meetings — auto-detects when an app opens the mic, records mic + system loopback, and writes a transcript per meeting to `~/Recordings/transcribe-meeting/`:
+The extras are split (`record`, `transcribe`, `diarize`, `polish`) so you can opt out of pieces you don't need — for example, drop `polish` if you don't want a 7B model on disk.
+
+## Usage
+
+### `record` — watch for meetings and transcribe them
+
+The default subcommand. Watches CoreAudio for any process opening the mic, then captures **two** tracks for the duration of the meeting:
+
+- `meeting-N-mic.wav` — your microphone
+- `meeting-N-loopback.wav` — everything the system played back (i.e. the other participants)
+
+Two tracks instead of one because diarization on a mixed track is much harder and because it lets the transcriber attribute "you" vs. "them" cleanly. Output lands in `~/Recordings/transcribe-meeting/` along with a `meeting-N-transcript.md`.
 
 ```sh
 uv run transcribe-meeting record
 ```
 
-Useful flags:
+Flags:
 
-- `--manual` — drive meetings from stdin (`n` = start, `s` = stop) instead of mic auto-detection
-- `--speakers N` / `--max-speakers N` — pin or cap the diarizer's speaker count
-- `--polish` — run an MLX-LM pass over the transcript (override model with `--polish-model`)
-- `--no-ask` — skip the post-meeting headcount prompt
+- `--manual` — skip mic detection; press `n` to start a meeting, `s` to stop. Useful when you want to record something that isn't routed through a normal app.
+- `--speakers N` / `--max-speakers N` — pin or cap the diarizer's speaker count when you know it (much more accurate than letting pyannote guess).
+- `--no-ask` — don't prompt for the headcount after each meeting.
+- `--polish` — run a local LLM pass over the transcript (see below).
 
-Enroll speakers from a finished meeting (transcript and future meetings get the real names):
+### `label` — put real names on speakers
+
+Diarization gives you `SPEAKER_00`, `SPEAKER_01`, etc. `label` enrolls those speakers from a finished meeting into a local speaker bank (`~/.config/transcribe-meeting/speakers.json`), rewrites the transcript with the real names, and uses the embeddings to recognize the same people automatically in future meetings.
 
 ```sh
 uv run transcribe-meeting label 1 SPEAKER_00=alex SPEAKER_01=jamie
 ```
 
-Manage the enrolled-speaker bank (stored at `~/.config/transcribe-meeting/speakers.json`):
+Manage the bank:
 
 ```sh
 uv run transcribe-meeting speakers list
 uv run transcribe-meeting speakers forget alex
 ```
 
-Tests:
+### `--polish` — clean up ASR errors with a local LLM
+
+ASR output is usually right but has the occasional homophone, dropped word, or mangled name. `--polish` runs the raw transcript through a local MLX-LM model (default `mlx-community/Qwen2.5-7B-Instruct-4bit`) to fix those using surrounding context, and writes a separate `meeting-N-transcript-polished.md` so you always keep the raw version.
+
+```sh
+uv run transcribe-meeting record --polish
+uv run transcribe-meeting record --polish --polish-model mlx-community/<other-model>
+```
+
+It's a separate file, not in-place, because the polisher can occasionally hallucinate — keeping the raw transcript means you can always diff.
+
+## Tests
 
 ```sh
 uv run pytest
