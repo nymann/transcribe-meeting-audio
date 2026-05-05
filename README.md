@@ -18,10 +18,17 @@ Records meetings on macOS and ingests transcripts. Detects when any app opens th
 ## Install
 
 ```sh
-uv sync --extra all
+just install
 ```
 
-The extras are split (`record`, `transcribe`, `diarize`, `polish`) so you can opt out of pieces you don't need — for example, drop `polish` if you don't want a 7B model on disk.
+That installs the dependencies, registers `transcribe-meeting` as a global `uv tool` (so you can run it from anywhere), and prints how to set up Hugging Face auth if it isn't already.
+
+If you don't want everything, install manually with the extras you need (`record`, `transcribe`, `diarize`, `polish`) — for example, drop `polish` if you don't want a 7B model on disk:
+
+```sh
+uv sync --extra record --extra transcribe --extra diarize
+uv tool install --force .
+```
 
 ## Usage
 
@@ -35,7 +42,7 @@ The default subcommand. Watches CoreAudio for any process opening the mic, then 
 Two tracks instead of one because diarization on a mixed track is much harder and because it lets the transcriber attribute "you" vs. "them" cleanly. Output lands in `~/Recordings/transcribe-meeting/` along with a `meeting-N-transcript.md`.
 
 ```sh
-uv run transcribe-meeting record
+transcribe-meeting record
 ```
 
 Flags:
@@ -50,14 +57,14 @@ Flags:
 Diarization gives you `SPEAKER_00`, `SPEAKER_01`, etc. `label` enrolls those speakers from a finished meeting into a local speaker bank (`~/.config/transcribe-meeting/speakers.json`), rewrites the transcript with the real names, and uses the embeddings to recognize the same people automatically in future meetings.
 
 ```sh
-uv run transcribe-meeting label 1 SPEAKER_00=alex SPEAKER_01=jamie
+transcribe-meeting label 1 SPEAKER_00=alex SPEAKER_01=jamie
 ```
 
 Manage the bank:
 
 ```sh
-uv run transcribe-meeting speakers list
-uv run transcribe-meeting speakers forget alex
+transcribe-meeting speakers list
+transcribe-meeting speakers forget alex
 ```
 
 ### `--polish` — clean up ASR errors with a local LLM
@@ -65,8 +72,8 @@ uv run transcribe-meeting speakers forget alex
 ASR output is usually right but has the occasional homophone, dropped word, or mangled name. `--polish` runs the raw transcript through a local MLX-LM model (default `mlx-community/Qwen2.5-7B-Instruct-4bit`) to fix those using surrounding context, and writes a separate `meeting-N-transcript-polished.md` so you always keep the raw version.
 
 ```sh
-uv run transcribe-meeting record --polish
-uv run transcribe-meeting record --polish --polish-model mlx-community/<other-model>
+transcribe-meeting record --polish
+transcribe-meeting record --polish --polish-model mlx-community/<other-model>
 ```
 
 It's a separate file, not in-place, because the polisher can occasionally hallucinate — keeping the raw transcript means you can always diff.
@@ -74,5 +81,5 @@ It's a separate file, not in-place, because the polisher can occasionally halluc
 ## Tests
 
 ```sh
-uv run pytest
+just test
 ```
